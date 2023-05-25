@@ -179,6 +179,7 @@ int main(int argc, char** argv)
     cudaEventSynchronize(stop);
     float milliseconds = 0;
     cudaEventElapsedTime(&milliseconds, start, stop);
+    printf("Done in %fms!\n", milliseconds);
 
     // compare CPU and GPU results
     for (i = 0; i < degreeBins * rBins; i++)
@@ -186,7 +187,7 @@ int main(int argc, char** argv)
         if (cpuht[i] != h_hough[i])
             printf("Calculation mismatch at : %i %i %i\n", i, cpuht[i], h_hough[i]);
     }
-    printf("Done in %fms!\n", milliseconds);
+    printf("Checked!");
 
     // TODO clean-up
     cudaFree((void*)d_in);
