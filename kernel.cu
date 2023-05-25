@@ -122,11 +122,16 @@ int main(int argc, char** argv)
     float* d_Cos;
     float* d_Sin;
 
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
     cudaMalloc((void**)&d_Cos, sizeof(float) * degreeBins);
     cudaMalloc((void**)&d_Sin, sizeof(float) * degreeBins);
 
     // CPU calculation
     CPU_HoughTran(inImg.pixels, w, h, &cpuht);
+
 
     // pre-compute values to be stored
     float* pcCos = (float*)malloc(sizeof(float) * degreeBins);
@@ -162,15 +167,18 @@ int main(int argc, char** argv)
     // execution configuration uses a 1-D grid of 1-D blocks, each made of THREADS_PER_BLOCK threads
     //1 thread por pixel
     int blockNum = ceil(w * h / THREADS_PER_BLOCK);
-    //printf("Blocknum: %d\n", blockNum);
-    GPU_HoughTran <<< blockNum, THREADS_PER_BLOCK >>> (d_in, w, h, d_hough, rMax, rScale, d_Cos, d_Sin);
 
-    CUDA_ERR_MACRO (cudaPeekAtLastError());
+    //Timed CUDA computation
+    cudaEventRecord(start);
+    GPU_HoughTran <<< blockNum, THREADS_PER_BLOCK >>> (d_in, w, h, d_hough, rMax, rScale, d_Cos, d_Sin);
+    cudaEventRecord(stop);
 
     // get results from device
     cudaMemcpy(h_hough, d_hough, sizeof(int) * degreeBins * rBins, cudaMemcpyDeviceToHost);
-    CUDA_ERR_MACRO (cudaPeekAtLastError());
 
+    cudaEventSynchronize(stop);
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
 
     // compare CPU and GPU results
     for (i = 0; i < degreeBins * rBins; i++)
@@ -178,7 +186,7 @@ int main(int argc, char** argv)
         if (cpuht[i] != h_hough[i])
             printf("Calculation mismatch at : %i %i %i\n", i, cpuht[i], h_hough[i]);
     }
-    printf("Done!\n");
+    printf("Done in %fms!\n", milliseconds);
 
     // TODO clean-up
     cudaFree((void*)d_in);
