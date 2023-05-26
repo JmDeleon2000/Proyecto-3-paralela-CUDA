@@ -16,7 +16,7 @@ const int rBins = 100;
 # define M_PI           3.14159265358979323846
 const float radInc = degreeInc * M_PI / 180;
 
-#define THREADS_PER_BLOCK 256
+#define THREADS_PER_BLOCK 1024
 
 //macro para imprimir errores
 #define CUDA_ERR_MACRO(value) {           \
@@ -73,10 +73,15 @@ __global__ void GPU_HoughTranConstShared(unsigned char* pic, int w, int h,
     int* out, float rMax, float rScale)
 {
     __shared__ int acc[rBins * degreeBins];
+    constexpr int offset = rBins * degreeBins / THREADS_PER_BLOCK;
 
     int gloID = blockIdx.x * blockDim.x + threadIdx.x;
     if (gloID > w * h) return;      // in case of extra threads in block
 
+    for (int i = 0; i < offset; i++)
+        acc[threadIdx.x + THREADS_PER_BLOCK * i] = 0;
+    if (threadIdx.x < rBins * degreeBins % THREADS_PER_BLOCK)
+        acc[(THREADS_PER_BLOCK)*offset + threadIdx.x] = 0;
 
     int xCent = w / 2;
     int yCent = h / 2;
@@ -84,36 +89,30 @@ __global__ void GPU_HoughTranConstShared(unsigned char* pic, int w, int h,
     int xCoord = gloID % w - xCent;
     int yCoord = yCent - gloID / w;
 
-    //TODO eventualmente usar memoria compartida para el acumulador
+
 
     if (pic[gloID] > 0)
     {
         for (int tIdx = 0; tIdx < degreeBins; tIdx++)
         {
             float r = xCoord * d_constCos[tIdx] + yCoord * d_constSin[tIdx];
-            int rIdx = (r + rMax) / rScale;
+            int rIdx = floor((r + (double)rMax) / (double)rScale);
 
             atomicAdd(acc + (rIdx * degreeBins + tIdx), 1);
         }
     }
-
     __syncthreads();
-    constexpr int offset = rBins * degreeBins / THREADS_PER_BLOCK;
-    //printf("Nah %d\n", offset);
+
 
     for (int i = 0; i < offset; i++)
-        atomicAdd(out + threadIdx.x * offset + i,
-            acc[threadIdx.x * offset + i]);
-    if (gloID == 1)
-        for (int i = 0; i < offset; i++)
-            printf("BRUH: %d\t%d\n", threadIdx.x, threadIdx.x * offset + i);
-    if (threadIdx.x > 0)
-        return;
-    //for (int i = 0; i < rBins * degreeBins % THREADS_PER_BLOCK; i++)
-    //    atomicAdd(out + (THREADS_PER_BLOCK) * offset + i,
-    //        acc[(THREADS_PER_BLOCK) * offset + i]);
+        atomicAdd(out + threadIdx.x + THREADS_PER_BLOCK * i,
+            acc[threadIdx.x + THREADS_PER_BLOCK * i]);
+
+    if (threadIdx.x < rBins * degreeBins % THREADS_PER_BLOCK)
+        atomicAdd(out + (THREADS_PER_BLOCK)*offset + threadIdx.x,
+            acc[(THREADS_PER_BLOCK)*offset + threadIdx.x]);
 }
-#endif
+
 
 //TODO Kernel memoria Constante
 __global__ void GPU_HoughTranConst(unsigned char* pic, int w, int h,
@@ -144,6 +143,7 @@ __global__ void GPU_HoughTranConst(unsigned char* pic, int w, int h,
         atomicAdd(acc + (rIdx * degreeBins + tIdx), 1);
     }
 }
+#endif
 
 // GPU kernel. One thread per image pixel is spawned.
 // The accummulator memory needs to be allocated by the host in global memory
@@ -167,8 +167,6 @@ __global__ void GPU_HoughTran(unsigned char* pic, int w, int h,
 
     for (int tIdx = 0; tIdx < degreeBins; tIdx++)
     {
-        //TODO utilizar memoria constante para senos y cosenos
-        //float r = xCoord * cos(tIdx) + yCoord * sin(tIdx); //probar con esto para ver diferencia en tiempo
         float r = xCoord * d_Cos[tIdx] + yCoord * d_Sin[tIdx];
         int rIdx = (r + rMax) / rScale;
         //debemos usar atomic, pero que race condition hay si somos un thread por pixel? explique
@@ -176,11 +174,6 @@ __global__ void GPU_HoughTran(unsigned char* pic, int w, int h,
         //Las threads no tienen una relación 1 a 1 con la memoria en este espacio.
         atomicAdd(acc + (rIdx * degreeBins + tIdx), 1);
     }
-
-    //TODO eventualmente cuando se tenga memoria compartida, copiar del local al global
-    //utilizar operaciones atomicas para seguridad
-    //faltara sincronizar los hilos del bloque en algunos lados
-
 }
 
 __global__ void makeImage(unsigned char* pic, int w, int h,
@@ -284,7 +277,7 @@ int main(int argc, char** argv)
 
     // execution configuration uses a 1-D grid of 1-D blocks, each made of THREADS_PER_BLOCK threads
     //1 thread por pixel
-    int blockNum = ceil(w * h / THREADS_PER_BLOCK);
+    int blockNum = ceil((double)w * (double)h / (double)THREADS_PER_BLOCK);
 
 #if constantmem || sharedmem
     cudaMemcpyToSymbol(d_constCos, pcCos, sizeof(float) * degreeBins);
