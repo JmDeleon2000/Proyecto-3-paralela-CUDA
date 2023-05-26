@@ -149,51 +149,9 @@ __global__ void makeImage(unsigned char* pic, int w, int h,
         max[threadIdx.x] = val > max[threadIdx.x] ? val : max[threadIdx.x];
     }
 
-   // if (max[threadIdx.x] > w * 4)
-    out[w * h - gloID] = make_char3(    max[threadIdx.x] * 37 % 255, //blue
-                                     max[threadIdx.x] * 51 % 255, //green
-                                     max[threadIdx.x] * 91 % 255); //red
-
-    __syncthreads(); //esperar a que se escriban los valores antes de hacer una convolución
-
-    const int x = gloID % w;
-    const int y = gloID / w;
-
-    const int conv_kernel_sz = 3;
-
-    
-    const int x_start = x - conv_kernel_sz;
-    const int y_start = y - conv_kernel_sz;
-    const int x_end = x + conv_kernel_sz;
-    const int y_end = y + conv_kernel_sz;
-
-    if (x_start - conv_kernel_sz <= 0 ||
-        y_start - conv_kernel_sz <= 0 ||
-        x_end + conv_kernel_sz >= w ||
-        y_end + conv_kernel_sz >= h)
-        return;
-
-    int3 avg;
-    for (int iter = 0; iter < 100; iter++)
-    {
-        avg = make_int3(0, 0, 0);
-        for (int i = x_start; i < x_end; i++)
-            for (int j = y_start; j < y_end; j++)
-            {
-                avg.x += out[i + j * h].x;
-                avg.y += out[i + j * h].y;
-                avg.z += out[i + j * h].z;
-            }
-        avg.x = avg.x / (conv_kernel_sz * conv_kernel_sz);
-        avg.y = avg.y / (conv_kernel_sz * conv_kernel_sz);
-        avg.z = avg.z / (conv_kernel_sz * conv_kernel_sz);
-
-        __syncthreads();
-
-        out[x + y * h].x = avg.x;
-        out[x + y * h].y = avg.y;
-        out[x + y * h].z = avg.z;
-    }
+    out[w * h - gloID] = make_char3(    max[threadIdx.x], //blue
+                                     max[threadIdx.x], //green
+                                     max[threadIdx.x]); //red
 }
 
 //*****************************************************************
