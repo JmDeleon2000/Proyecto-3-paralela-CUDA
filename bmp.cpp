@@ -1,4 +1,5 @@
 #include <fstream>
+#include <math.h>
 
 
 void writeBMP(const char* filename, unsigned char *buffer, int width, int height)
@@ -22,17 +23,7 @@ void writeBMP(const char* filename, unsigned char *buffer, int width, int height
 	fwrite(header, 1, 14, dump);
 	fwrite(headerinfo, 1, 40, dump);
 
-	int i, j = 0;
-	while (j < height)
-	{
-		i = 0;
-		while (i < width)
-		{
-			fwrite(&buffer[(i + j * height) * 3], 1, 3, dump);
-			i++;
-		}
-		j++;
-	}
+	fwrite(buffer, 1, width * height * 3, dump);//escupir la imagen de memoria a disco
 
 	fclose(dump);
 }

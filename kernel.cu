@@ -1,6 +1,7 @@
 ﻿
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
+#include "cuda.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -115,7 +116,7 @@ __global__ void GPU_HoughTran(unsigned char* pic, int w, int h,
 
 __global__ void makeImage(unsigned char* pic, int w, int h,
     int* acc, float rMax, float rScale,
-    float* d_Cos, float* d_Sin, unsigned char* out)
+    float* d_Cos, float* d_Sin, char3* out)
 {
     int gloID = blockIdx.x * blockDim.x + threadIdx.x;
     if (gloID > w * h) return;      // in case of extra threads in block
@@ -131,23 +132,67 @@ __global__ void makeImage(unsigned char* pic, int w, int h,
     if (pic[gloID] == 0)
         return;
 
-    const int threshold = w;
+    
+
+    out[gloID] = make_char3(pic[w * h - gloID], pic[w * h - gloID], pic[w * h - gloID]); //pgm y bmp guardan los pixeles de manera inversa
+
+    __shared__ int max[THREADS_PER_BLOCK];
+    max[threadIdx.x] = 0;
     for (int tIdx = 0; tIdx < degreeBins; tIdx++)
     {
         //TODO utilizar memoria constante para senos y cosenos
         //float r = xCoord * cos(tIdx) + yCoord * sin(tIdx); //probar con esto para ver diferencia en tiempo
         float r = xCoord * d_Cos[tIdx] + yCoord * d_Sin[tIdx];
         int rIdx = (r + rMax) / rScale;
-        //debemos usar atomic, pero que race condition hay si somos un thread por pixel? explique
-        //R: porque el acumulador no es un vector en el espacio de los pixels, sino en el espacio de pesos para líneas
-        //Las threads no tienen una relación 1 a 1 con la memoria en este espacio.
+
         const int val = *(acc + (rIdx * degreeBins + tIdx));
-        if (val > w * 5.5)
-            out[gloID * 3] = 100 + (val % 7) * 22;      //blue
-        if (val > w * 5.7)
-            out[gloID * 3 + 1] = 100 + (val % 5) * 31;  //green
-        if (val > w * 6)
-            out[gloID * 3 + 2] = 100 + (val % 11) * 14;  // red
+        max[threadIdx.x] = val > max[threadIdx.x] ? val : max[threadIdx.x];
+    }
+
+   // if (max[threadIdx.x] > w * 4)
+    out[w * h - gloID] = make_char3(    max[threadIdx.x] * 37 % 255, //blue
+                                     max[threadIdx.x] * 51 % 255, //green
+                                     max[threadIdx.x] * 91 % 255); //red
+
+    __syncthreads(); //esperar a que se escriban los valores antes de hacer una convolución
+
+    const int x = gloID % w;
+    const int y = gloID / w;
+
+    const int conv_kernel_sz = 3;
+
+    
+    const int x_start = x - conv_kernel_sz;
+    const int y_start = y - conv_kernel_sz;
+    const int x_end = x + conv_kernel_sz;
+    const int y_end = y + conv_kernel_sz;
+
+    if (x_start - conv_kernel_sz <= 0 ||
+        y_start - conv_kernel_sz <= 0 ||
+        x_end + conv_kernel_sz >= w ||
+        y_end + conv_kernel_sz >= h)
+        return;
+
+    int3 avg;
+    for (int iter = 0; iter < 100; iter++)
+    {
+        avg = make_int3(0, 0, 0);
+        for (int i = x_start; i < x_end; i++)
+            for (int j = y_start; j < y_end; j++)
+            {
+                avg.x += out[i + j * h].x;
+                avg.y += out[i + j * h].y;
+                avg.z += out[i + j * h].z;
+            }
+        avg.x = avg.x / (conv_kernel_sz * conv_kernel_sz);
+        avg.y = avg.y / (conv_kernel_sz * conv_kernel_sz);
+        avg.z = avg.z / (conv_kernel_sz * conv_kernel_sz);
+
+        __syncthreads();
+
+        out[x + y * h].x = avg.x;
+        out[x + y * h].y = avg.y;
+        out[x + y * h].z = avg.z;
     }
 }
 
@@ -195,7 +240,8 @@ int main(int argc, char** argv)
     cudaMemcpy(d_Sin, pcSin, sizeof(float) * degreeBins, cudaMemcpyHostToDevice);
 
     // setup and copy data from host to device
-    unsigned char* d_in, * h_in, *d_out_pic;
+    unsigned char* d_in, * h_in; 
+    char3 * d_out_pic;
     int* d_hough, * h_hough;
 
     h_in = inImg.pixels; // h_in contiene los pixeles de la imagen
