@@ -73,14 +73,14 @@ __global__ void GPU_HoughTranConstShared(unsigned char* pic, int w, int h,
     int* out, float rMax, float rScale)
 {
     __shared__ int acc[rBins * degreeBins];
-    constexpr int offset = rBins * degreeBins / THREADS_PER_BLOCK;
+    constexpr int offset = (rBins * degreeBins) / THREADS_PER_BLOCK;
 
     int gloID = blockIdx.x * blockDim.x + threadIdx.x;
     if (gloID > w * h) return;      // in case of extra threads in block
 
     for (int i = 0; i < offset; i++)
         acc[threadIdx.x + THREADS_PER_BLOCK * i] = 0;
-    if (threadIdx.x < rBins * degreeBins % THREADS_PER_BLOCK)
+    if (threadIdx.x < (rBins * degreeBins) % THREADS_PER_BLOCK)
         acc[(THREADS_PER_BLOCK)*offset + threadIdx.x] = 0;
 
     int xCent = w / 2;
@@ -90,14 +90,14 @@ __global__ void GPU_HoughTranConstShared(unsigned char* pic, int w, int h,
     int yCoord = yCent - gloID / w;
 
 
+    __syncthreads();
 
     if (pic[gloID] > 0)
     {
         for (int tIdx = 0; tIdx < degreeBins; tIdx++)
         {
             float r = xCoord * d_constCos[tIdx] + yCoord * d_constSin[tIdx];
-            int rIdx = floor((r + (double)rMax) / (double)rScale);
-
+            int rIdx = (r + rMax) / rScale;
             atomicAdd(acc + (rIdx * degreeBins + tIdx), 1);
         }
     }
@@ -108,9 +108,10 @@ __global__ void GPU_HoughTranConstShared(unsigned char* pic, int w, int h,
         atomicAdd(out + threadIdx.x + THREADS_PER_BLOCK * i,
             acc[threadIdx.x + THREADS_PER_BLOCK * i]);
 
-    if (threadIdx.x < rBins * degreeBins % THREADS_PER_BLOCK)
+    if (threadIdx.x < (rBins * degreeBins) % THREADS_PER_BLOCK)
         atomicAdd(out + (THREADS_PER_BLOCK)*offset + threadIdx.x,
             acc[(THREADS_PER_BLOCK)*offset + threadIdx.x]);
+
 }
 
 
@@ -178,7 +179,7 @@ __global__ void GPU_HoughTran(unsigned char* pic, int w, int h,
 
 __global__ void makeImage(unsigned char* pic, int w, int h,
     int* acc, float rMax, float rScale,
-    float* d_Cos, float* d_Sin, char3* out)
+    float* d_Cos, float* d_Sin, char3* out, int thresholdMul = 6)
 {
     int gloID = blockIdx.x * blockDim.x + threadIdx.x;
     if (gloID > w * h) return;      // in case of extra threads in block
@@ -191,16 +192,14 @@ __global__ void makeImage(unsigned char* pic, int w, int h,
 
     //TODO eventualmente usar memoria compartida para el acumulador
 
-    if (pic[gloID] > 0)
-    out[gloID] = make_char3(pic[w * h - gloID], 
-                            pic[w * h - gloID], 
-                            pic[w * h - gloID]); //pgm y bmp guardan los pixeles de manera inversa
+    out[gloID] = make_char3(pic[gloID], 
+                            pic[gloID], 
+                            pic[gloID]); //pgm y bmp guardan los pixeles de manera inversa
 
 
     __shared__ int max[THREADS_PER_BLOCK];
-    max[threadIdx.x] = 0;
-   // if (pic[gloID] > 0)
 
+    max[threadIdx.x] = 0;
     for (int tIdx = 0; tIdx < degreeBins; tIdx++)
     {
         float r = xCoord * d_Cos[tIdx] + yCoord * d_Sin[tIdx];
@@ -209,17 +208,20 @@ __global__ void makeImage(unsigned char* pic, int w, int h,
         const int val = *(acc + (rIdx * degreeBins + tIdx));
         max[threadIdx.x] = val > max[threadIdx.x] ? val : max[threadIdx.x];
     }
-    if (pic[gloID] > 0)
 
-    out[w * h - gloID] = make_char3(    max[threadIdx.x] * 37 % 255, //blue
-                                      max[threadIdx.x] * 91 % 255, //green
-                                      max[threadIdx.x] * 51 % 255); //red
+    if (max[threadIdx.x] > w*thresholdMul)
+        out[gloID] = make_char3(   out[gloID].x   +      max[threadIdx.x] * 37 % 100,//blue
+                                   out[gloID].y    +    max[threadIdx.x] * 91 % 100,//green
+                                   out[gloID].z  +    max[threadIdx.x] * 51 % 100); //red
 }
 
 //*****************************************************************
 int main(int argc, char** argv)
 {
     int i;
+    int threshold = 6;
+    if (argc > 2)
+        threshold = strtol(argv[2], 0, 10);
 
     PGMImage inImg(argv[1]);
 
@@ -305,7 +307,7 @@ int main(int argc, char** argv)
 
     cudaMalloc((void**)&d_out_pic, sizeof(unsigned char) * w * h * 3);
     cudaMemset(d_out_pic, 0, sizeof(unsigned char) * w * h * 3);
-    makeImage <<< blockNum, THREADS_PER_BLOCK >>> (d_in, w, h, d_hough, rMax, rScale, d_Cos, d_Sin, d_out_pic);
+    makeImage <<< blockNum, THREADS_PER_BLOCK >>> (d_in, w, h, d_hough, rMax, rScale, d_Cos, d_Sin, d_out_pic, threshold);
 
     unsigned char* imgBuffer = (unsigned char*)malloc(sizeof(unsigned char) * w * h * 3);
     cudaMemcpy(imgBuffer, d_out_pic, sizeof(unsigned char) * w * h * 3, cudaMemcpyDeviceToHost);
