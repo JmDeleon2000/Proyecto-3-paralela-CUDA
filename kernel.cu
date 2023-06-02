@@ -288,6 +288,7 @@ int main(int argc, char** argv)
 
     //Timed CUDA computation
     cudaEventRecord(start);
+
 #if sharedmem
     GPU_HoughTranConstShared <<< blockNum, THREADS_PER_BLOCK >>> (d_in, w, h, d_hough, rMax, rScale);
 #elif constantmem
