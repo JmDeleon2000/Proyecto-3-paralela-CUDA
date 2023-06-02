@@ -16,7 +16,7 @@ const int rBins = 100;
 # define M_PI           3.14159265358979323846
 const float radInc = degreeInc * M_PI / 180;
 
-#define THREADS_PER_BLOCK 1024
+#define THREADS_PER_BLOCK 256
 
 //macro para imprimir errores
 #define CUDA_ERR_MACRO(value) {           \
@@ -57,8 +57,8 @@ void CPU_HoughTran(unsigned char* pic, int w, int h, int** acc)
             }
         }
 }
-#define sharedmem 1
-#define constantmem 1
+#define sharedmem 0
+#define constantmem 0
 //*****************************************************************
 // TODO usar memoria constante para la tabla de senos y cosenos
 // inicializarlo en main y pasarlo al device
